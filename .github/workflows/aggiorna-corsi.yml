@@ -1,0 +1,52 @@
+name: Aggiorna corsi
+
+# Ogni giorno legge il planning (PDF) dal sito del Due Ponti Sporting Club,
+# lo trasforma in corsi.json (nessuna AI: parsing deterministico) e lo pubblica su master.
+on:
+  schedule:
+    - cron: "17 4 * * *"      # ogni giorno alle 04:17 UTC
+  workflow_dispatch:           # avvio manuale da "Actions" -> "Run workflow"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aggiorna-corsi
+  cancel-in-progress: false
+
+jobs:
+  aggiorna:
+    if: github.repository_owner == 'Enzo9191'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Installa dipendenze
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet -r requirements.txt
+
+      - name: Leggi il planning dal sito
+        id: parse
+        continue-on-error: true
+        run: .venv/bin/python scripts/aggiorna_corsi.py
+
+      - name: Pubblica corsi.json se cambiato
+        run: |
+          if git diff --quiet -- corsi.json; then
+            echo "Nessuna modifica a corsi.json"
+            exit 0
+          fi
+          MSG=$(python3 -c 'import json; d=json.load(open("corsi.json")); s=d["status"]; print("Corsi aggiornati: " + d.get("revision", "") if s["ok"] else "Corsi: errore " + s["code"])')
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add corsi.json
+          git commit -m "$MSG"
+          git push origin HEAD:master
+
+      - name: Segnala errore di lettura
+        if: steps.parse.outcome == 'failure'
+        run: |
+          python3 -c 'import json; s=json.load(open("corsi.json"))["status"]; print("::error title=" + s["code"] + "::" + s["message"])'
+          exit 1
